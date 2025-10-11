@@ -12,7 +12,6 @@ import com.flutter.gradle.plugins.PluginHandler
 import groovy.lang.Closure
 import groovy.util.Node
 import org.gradle.api.GradleException
-import org.gradle.api.JavaVersion
 import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.UnknownTaskException
@@ -59,12 +58,8 @@ object FlutterPluginUtils {
     @Suppress("DEPRECATION")
     internal fun capitalize(string: String): String = string.capitalize()
 
-    // Kotlin's toLowerCase function is deprecated, but the suggested replacement is not supported
-    // by the minimum version of Kotlin that we support. Centralize the use to one place, so that
-    // when our minimum version does support the replacement we can replace by changing a single
-    // line.
-    @Suppress("DEPRECATION")
-    internal fun lowercase(string: String): String = string.toLowerCase()
+    @OptIn(ExperimentalStdlibApi::class)
+    internal fun lowercase(string: String): String = string.lowercase()
 
     // compareTo implementation of version strings in the format of ints and periods
     // Will not crash on RC candidate strings but considers all RC candidates the same version.
@@ -404,10 +399,8 @@ object FlutterPluginUtils {
         return project.extensions.findByType(BaseExtension::class.java)!!
     }
 
-    // TODO: Use find by type and AbstractAppExtension instead. Or delete in favor of getAndroidExtension.
-    //       see https://github.com/flutter/flutter/issues/165882
     private fun getAndroidAppExtensionOrNull(project: Project): AbstractAppExtension? =
-        project.extensions.findByName("android") as? AbstractAppExtension
+        project.extensions.findByType(AbstractAppExtension::class.java)
 
     /**
      * Expected format of getAndroidExtension(project).compileSdkVersion is a string of the form
@@ -625,7 +618,7 @@ object FlutterPluginUtils {
         // build artifact, so we move it from that directory to within Flutter's build directory
         // to avoid polluting source directories with build artifacts.
         //
-        // AGP explicitely recommends not setting the buildStagingDirectory to be within a build
+        // AGP explicitly recommends not setting the buildStagingDirectory to be within a build
         // directory in
         // https://developer.android.com/reference/tools/gradle-api/8.3/null/com/android/build/api/dsl/Cmake#buildStagingDirectory(kotlin.Any),
         // but as we are not actually building anything (and are instead only tricking AGP into
@@ -641,8 +634,13 @@ object FlutterPluginUtils {
         // CMake will print warnings when you try to build an empty project.
         // These arguments silence the warnings - our project is intentionally
         // empty.
-        gradleProjectAndroidExtension.defaultConfig.externalNativeBuild.cmake
-            .arguments("-Wno-dev", "--no-warn-unused-cli")
+        gradleProjectAndroidExtension.buildTypes.forEach { buildType ->
+            buildType.externalNativeBuild.cmake.arguments(
+                "-Wno-dev",
+                "--no-warn-unused-cli",
+                "-DCMAKE_BUILD_TYPE=${buildType.name}"
+            )
+        }
     }
 
     @JvmStatic
@@ -670,7 +668,7 @@ object FlutterPluginUtils {
         if (!supportsBuildMode(project, flutterBuildMode)) {
             project.logger.quiet(
                 "Project does not support Flutter build mode: $flutterBuildMode, " +
-                    "skipping adding flutter dependencies"
+                    "skipping adding Flutter dependencies"
             )
             return
         }
@@ -709,7 +707,7 @@ object FlutterPluginUtils {
 
     // ------------------ Task adders (a subset of the above category)
 
-    // Add a task that can be called on flutter projects that prints the Java version used in Gradle.
+    // Add a task that can be called on Flutter projects that prints the Java version used in Gradle.
     //
     // Format of the output of this task can be used in debugging what version of Java Gradle is using.
     // Not recommended for use in time sensitive commands like `flutter run` or `flutter build` as
@@ -721,7 +719,25 @@ object FlutterPluginUtils {
             description = "Print the current java version used by gradle. see: " +
                 "https://docs.gradle.org/current/javadoc/org/gradle/api/JavaVersion.html"
             doLast {
-                println(JavaVersion.current())
+                println(VersionFetcher.getJavaVersion())
+            }
+        }
+    }
+
+    // Add a task that can be called on Flutter projects that prints the KGP version used in
+    // the project.
+    //
+    // Format of the output of this task can be used in debugging what version of KGP a
+    // project is using.
+    // Not recommended for use in time sensitive commands like `flutter run` or `flutter build` as
+    // Gradle tasks are slower than we want. Particularly in light of https://github.com/flutter/flutter/issues/119196.
+    @JvmStatic
+    @JvmName("addTaskForKGPVersion")
+    internal fun addTaskForKGPVersion(project: Project) {
+        project.tasks.register("kgpVersion") {
+            description = "Print the current kgp version used by the project."
+            doLast {
+                println("KGP Version: " + VersionFetcher.getKGPVersion(project).toString())
             }
         }
     }
@@ -839,7 +855,9 @@ object FlutterPluginUtils {
         //    https://github.com/flutter/flutter/issues/166550
         @Suppress("DEPRECATION")
         val manifest: Node =
-            groovy.xml.XmlParser(false, false).parse(findProcessResources(baseVariantOutput).manifestFile)
+            groovy.xml
+                .XmlParser(false, false)
+                .parse(findProcessResources(baseVariantOutput).manifestFile)
         val applicationNode: Node? =
             manifest.children().find { node ->
                 node is Node && node.name() == "application"
