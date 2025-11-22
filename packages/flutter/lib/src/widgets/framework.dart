@@ -1160,7 +1160,7 @@ abstract class State<T extends StatefulWidget> with Diagnosticable {
   void setState(VoidCallback fn) {
     assert(() {
       if (_debugLifecycleState == _StateLifecycle.defunct) {
-        throw FlutterError.fromParts(<DiagnosticsNode>[
+      throw FlutterError.fromParts(<DiagnosticsNode>[
           ErrorSummary('setState() called after dispose(): $this'),
           ErrorDescription(
             'This error happens if you call setState() on a State object for a widget that '
